@@ -3,7 +3,7 @@ import os
 from google.cloud import bigquery
 from google.oauth2 import service_account
 
-credentials_path = ".secrets/sp_api_bq_creds.json2"
+credentials_path = ".secrets/sp_api_bq_creds.json"
 if not os.path.exists(credentials_path):
     raise BaseException("Creds for BQ are mising")
 
