@@ -20,7 +20,7 @@ logging.basicConfig(
 
 async def check_if_ba_report_exists(document):
     asins = document["reportSpecification"].get("reportOptions", {}).get("asin")
-    print("Checking asins: ")
+    print(f"Checking asins: {asins}")
     asins = [x.strip() for x in asins.split()]
     start_date = datetime.strptime(
         document["reportSpecification"].get("dataStartTime"), "%Y-%m-%d"
