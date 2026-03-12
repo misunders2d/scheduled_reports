@@ -1,0 +1,17 @@
+[project]
+name = "scheduled-reports"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "amazon-sp",
+]
+
+[tool.uv.sources]
+amazon-sp = { git = "https://github.com/misunders2d/amazon_sp.git", rev = "master" }
+
+[dependency-groups]
+dev = [
+    "ipython>=9.11.0",
+]
