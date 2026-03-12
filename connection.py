@@ -1,15 +1,19 @@
-from os.path import exists
+import os
 
 from google.cloud import bigquery
 from google.oauth2.service_account import Credentials
 
+credentials_secret = os.environ.get("gcp_service_account", "")
 credentials_path = ".secrets/sp_api_bq_creds.json"
-if not exists(credentials_path):
+if not os.path.exists(credentials_path) and not credentials_secret:
     raise BaseException("Creds for BQ are mising")
 
 
 def create_credentials():
-    credentials = Credentials.from_service_account_file(credentials_path)
+    if credentials_secret:
+        credentials = Credentials.from_service_account_info(credentials_secret)
+    else:
+        credentials = Credentials.from_service_account_file(credentials_path)
     return credentials
 
 
