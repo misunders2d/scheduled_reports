@@ -48,16 +48,14 @@ async def check_if_ba_report_exists(document):
         bq_result = client.query(query, job_config=job_config)
     duplicate_asins = {x.asin for x in bq_result}
     unique_asins = [x for x in asins if x not in duplicate_asins]
-    if duplicate_asins:
-        print(
-            f"[[DUPLICATES]] {len(duplicate_asins)} duplicate asins found for {start_date} {period}: ",
-            ", ".join(duplicate_asins),
-        )
-    if unique_asins:
-        print(
-            f"[[UNIQUE]] {len(unique_asins)} unique asins found for {start_date} {period}: ",
-            ", ".join(unique_asins),
-        )
+    print(
+        f"[[DUPLICATES]] {len(duplicate_asins)} duplicate asins found for {start_date} {period}: ",
+        ", ".join(duplicate_asins),
+    )
+    print(
+        f"[[UNIQUE]] {len(unique_asins)} unique asins found for {start_date} {period}: ",
+        ", ".join(unique_asins),
+    )
     return unique_asins
 
 
@@ -104,6 +102,8 @@ def process_document(document):
 
 
 async def upload_ba_report(document):
+    if not document or document == "":
+        return {"status": "failed", "error": "document is empty"}
     document_specs = document.get("reportSpecification", "")
     try:
         unique_asins_job = check_if_ba_report_exists(document)
@@ -127,7 +127,7 @@ async def upload_ba_report(document):
         return {"status": "failed", "error": e, "document": document_specs}
 
 
-async def collect_sqp_reports(created_since, created_before):
+async def collect_sqp_reports(created_since, created_before, max_retries=3):
     print(f"[[DATE: {created_since} to {created_before}]]")
     created_since = (
         convert_date_to_isoformat(created_since)
@@ -140,78 +140,81 @@ async def collect_sqp_reports(created_since, created_before):
         else created_before
     )
 
-    try:
-        all_reports = await fetch_reports(
-            report_types=[
-                ReportType.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT
-            ],
-            processing_statuses=["DONE"],
-            created_since=created_since,
-            created_before=created_before,
-        )
-        for i, report_record in enumerate(all_reports, start=1):
-            document = await check_and_download_report(
-                report_id=report_record["reportId"]
+    for attempt in range(1, max_retries + 1):
+        try:
+            all_reports = await fetch_reports(
+                report_types=[
+                    ReportType.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT
+                ],
+                processing_statuses=["DONE"],
+                created_since=created_since,
+                created_before=created_before,
             )
-            result = await upload_ba_report(document=document)
-            if result["status"] == "failed":
-                await send_telegram_message(
-                    message=f"Failed to process BA report. Error: {result['error']}, document: {result['document']}"
+            for i, report_record in enumerate(all_reports, start=1):
+                document = await check_and_download_report(
+                    report_id=report_record["reportId"]
                 )
-            print(f"Uploaded {i} reports of {len(all_reports)}", end="\n\n")
-    except Exception as e:
-        print(f"[[ERROR for {str(e)}]]: {e}\nRetrying...")
-        await collect_sqp_reports(
-            created_since=created_since,
-            created_before=created_before,
-        )
+                result = await upload_ba_report(document=document)
+                if result["status"] == "failed":
+                    await send_telegram_message(
+                        message=f"Failed to process BA report. Error: {result['error']}, document: {result['document']}"
+                    )
+                print(f"Uploaded {i} reports of {len(all_reports)}", end="\n\n")
+        except Exception as e:
+            print(f"[[ERROR for {str(e)}]]: {e}\nRetrying...")
+
+        if attempt < max_retries:
+            await asyncio.sleep(5)
 
 
-async def run_sqp_reports(
-    start_dates: list[str | datetime] | str, asins: list[str] | str
-):
+async def run_sqp_reports(date_asin_dict: dict[str | datetime, str | list]) -> list:
     """
     Downloads SQP reports for a given selection of dates and for a given set of ASINs.
     ASINs are chunked 18 at a time.
     """
-    asins_list = chunk_asins(asins)
-    start_dates_clean = (
-        [convert_date_to_isoformat(d) for d in start_dates]
-        if isinstance(start_dates, list)
-        else [convert_date_to_isoformat(start_dates)]
-    )
-    ba_report_jobs = []
-    for week_start in start_dates_clean:
-        for asin_chunk in asins_list:
-            ba_report_jobs.append(
-                brand_analytics_report(
+    failed_reports = []
+
+    clean_date_asin_dict = {
+        convert_date_to_isoformat(start_date): chunk_asins(asin_list)
+        for start_date, asin_list in date_asin_dict.items()
+    }
+
+    try:
+        ba_report_jobs = {}
+        for week_start, asin_list in clean_date_asin_dict.items():
+            for asin_chunk in asin_list:
+                ba_report_jobs[week_start, asin_chunk] = brand_analytics_report(
                     week_start=week_start,
                     report_type=ReportType.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT,
                     asin=asin_chunk,
                 )
-            )
 
-    responses = []
-    for ba_report_job in ba_report_jobs:
-        responses.append(await ba_report_job)
+        responses = {}
+        for date_asin, ba_report_job in ba_report_jobs.items():
+            responses[date_asin] = await ba_report_job
 
-    document_jobs = []
-    for response in responses:
-        document_jobs.append(check_and_download_report(response=response))
+        document_jobs = {}
+        for date_asin, response in responses.items():
+            document_jobs[date_asin] = check_and_download_report(response=response)
 
-    report_documents = []
-    for document_job in document_jobs:
-        report_documents.append(await document_job)
+        report_documents = {}
+        for date_asin, document_job in document_jobs.items():
+            report_documents[date_asin] = await document_job
 
-    ba_uploads = []
-    for report_document in report_documents:
-        ba_uploads.append(upload_ba_report(report_document))
+        ba_uploads = {}
+        for date_asin, report_document in report_documents.items():
+            if report_document["status"] == "FATAL":
+                failed_reports.append(date_asin)
+            else:
+                ba_uploads[date_asin] = upload_ba_report(report_document)
 
-    results = []
-    for ba_upload in ba_uploads:
-        results.append(await ba_upload)
-    for result in results:
-        print(result)
+        for date_asin, ba_upload in ba_uploads.items():
+            await ba_upload
+    except ValueError as e:
+        print(f"Wrong date submitted: {e}")
+    except Exception as e:
+        print(f"Error while creating sqp reports: {e}")
+    return failed_reports
 
 
 if __name__ == "__main__":
