@@ -153,7 +153,11 @@ async def collect_sqp_reports(created_since, created_before):
             document = await check_and_download_report(
                 report_id=report_record["reportId"]
             )
-            _ = await upload_ba_report(document=document)
+            result = await upload_ba_report(document=document)
+            if result["status"] == "failed":
+                await send_telegram_message(
+                    message=f"Failed to process BA report. Error: {result['error']}, document: {result['document']}"
+                )
             print(f"Uploaded {i} reports of {len(all_reports)}", end="\n\n")
     except Exception as e:
         print(f"[[ERROR for {str(e)}]]: {e}\nRetrying...")
