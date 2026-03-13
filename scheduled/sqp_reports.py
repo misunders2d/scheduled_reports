@@ -183,10 +183,12 @@ async def run_sqp_reports(date_asin_dict: dict[str | datetime, str | list]) -> l
         ba_report_jobs = {}
         for week_start, asin_list in clean_date_asin_dict.items():
             for asin_chunk in asin_list:
-                ba_report_jobs[week_start, asin_chunk] = brand_analytics_report(
-                    week_start=week_start,
-                    report_type=ReportType.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT,
-                    asin=asin_chunk,
+                ba_report_jobs[week_start, asin_chunk] = asyncio.create_task(
+                    brand_analytics_report(
+                        week_start=week_start,
+                        report_type=ReportType.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT,
+                        asin=asin_chunk,
+                    )
                 )
 
         responses = {}
@@ -195,7 +197,9 @@ async def run_sqp_reports(date_asin_dict: dict[str | datetime, str | list]) -> l
 
         document_jobs = {}
         for date_asin, response in responses.items():
-            document_jobs[date_asin] = check_and_download_report(response=response)
+            document_jobs[date_asin] = asyncio.create_task(
+                check_and_download_report(response=response)
+            )
 
         report_documents = {}
         for date_asin, document_job in document_jobs.items():
@@ -203,10 +207,12 @@ async def run_sqp_reports(date_asin_dict: dict[str | datetime, str | list]) -> l
 
         ba_uploads = {}
         for date_asin, report_document in report_documents.items():
-            if report_document["status"] == "FATAL":
+            if report_document.get("status", "") == "FATAL":
                 failed_reports.append(date_asin)
             else:
-                ba_uploads[date_asin] = upload_ba_report(report_document)
+                ba_uploads[date_asin] = asyncio.create_task(
+                    upload_ba_report(report_document)
+                )
 
         for date_asin, ba_upload in ba_uploads.items():
             await ba_upload
